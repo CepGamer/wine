@@ -2215,6 +2215,120 @@ static BOOL freedesktop_mime_type_for_extension(struct list *native_mime_types,
     return ret;
 }
 
+static const char* get_special_mime_type(LPCWSTR extension);
+static BOOL write_freedesktop_mime_type_entry(const char *packages_dir, const char *dot_extension,
+                                              const char *mime_type, const char *comment);
+
+static BOOL mime_type_for_extension(struct list *native_mime_types,
+                                    const WCHAR *extensionW,
+                                    const char *packages_dir,
+                                    char **mime_type,
+                                    BOOL *hasChanged)
+{
+    BOOL ret = FALSE;
+    char *extensionA = NULL;
+    WCHAR *lower_extensionW = NULL;
+    WCHAR *friendlyDocNameW = NULL;
+    char *friendlyDocNameA = NULL;
+    WCHAR *iconW = NULL;
+    char *iconA = NULL;
+    WCHAR *contentTypeW = NULL;
+    int len;
+
+    len = strlenW(extensionW);
+    lower_extensionW = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
+    if(lower_extensionW)
+    {
+        memcpy(lower_extensionW, extensionW, (len + 1) * sizeof(WCHAR));
+        strlwrW(lower_extensionW);
+        extensionA = wchars_to_utf8_chars(lower_extensionW);
+        if (extensionA == NULL)
+        {
+            WINE_ERR("out of memory\n");
+            goto end;
+        }
+    }
+    else
+    {
+        WINE_ERR("out of memory\n");
+        goto end;
+    }
+
+    friendlyDocNameW = assoc_query(ASSOCSTR_FRIENDLYDOCNAME, extensionW, NULL);
+    if (friendlyDocNameW)
+    {
+        friendlyDocNameA = wchars_to_utf8_chars(friendlyDocNameW);
+        if (friendlyDocNameA == NULL)
+        {
+            WINE_ERR("out of memory\n");
+            goto end;
+        }
+    }
+
+    iconW = assoc_query(ASSOCSTR_DEFAULTICON, extensionW, NULL);
+
+    contentTypeW = assoc_query(ASSOCSTR_CONTENTTYPE, extensionW, NULL);
+    if (contentTypeW)
+        strlwrW(contentTypeW);
+
+    if (!freedesktop_mime_type_for_extension(native_mime_types, extensionA, extensionW, mime_type))
+        goto end;
+
+    if (*mime_type == NULL)
+    {
+        if (contentTypeW != NULL && strchrW(contentTypeW, '/'))
+            *mime_type = wchars_to_utf8_chars(contentTypeW);
+        else if ((get_special_mime_type(extensionW)))
+            *mime_type = strdupA(get_special_mime_type(extensionW));
+        else
+            *mime_type = heap_printf("application/x-wine-extension-%s", &extensionA[1]);
+
+        if (*mime_type != NULL)
+        {
+            /* GNOME seems to ignore the <icon> tag in MIME packages,
+             * and the default name is more intuitive anyway.
+             */
+            if (iconW)
+            {
+                char *flattened_mime = slashes_to_minuses(*mime_type);
+                if (flattened_mime)
+                {
+                    int index = 0;
+                    WCHAR *comma = strrchrW(iconW, ',');
+                    if (comma)
+                    {
+                        *comma = 0;
+                        index = atoiW(comma + 1);
+                    }
+                    iconA = extract_icon(iconW, index, flattened_mime, FALSE);
+                    HeapFree(GetProcessHeap(), 0, flattened_mime);
+                }
+            }
+
+            write_freedesktop_mime_type_entry(packages_dir, extensionA, *mime_type, friendlyDocNameA);
+            *hasChanged = TRUE;
+        }
+        else
+        {
+            WINE_FIXME("out of memory\n");
+            goto end;
+        }
+    }
+
+    ret = TRUE;
+
+end:
+    HeapFree(GetProcessHeap(), 0, extensionA);
+    HeapFree(GetProcessHeap(), 0, lower_extensionW);
+    HeapFree(GetProcessHeap(), 0, friendlyDocNameW);
+    HeapFree(GetProcessHeap(), 0, friendlyDocNameA);
+    HeapFree(GetProcessHeap(), 0, iconW);
+    HeapFree(GetProcessHeap(), 0, iconA);
+    HeapFree(GetProcessHeap(), 0, contentTypeW);
+
+    return ret;
+}
+
 static WCHAR* reg_get_valW(HKEY key, LPCWSTR subkey, LPCWSTR name)
 {
     DWORD size;
@@ -2587,11 +2701,6 @@ static BOOL generate_associations(const char *xdg_data_home, const char *package
             WCHAR *commandW = NULL;
             WCHAR *executableW = NULL;
             char *openWithIconA = NULL;
-            WCHAR *friendlyDocNameW = NULL;
-            char *friendlyDocNameA = NULL;
-            WCHAR *iconW = NULL;
-            char *iconA = NULL;
-            WCHAR *contentTypeW = NULL;
             char *mimeTypeA = NULL;
             WCHAR *friendlyAppNameW = NULL;
             char *friendlyAppNameA = NULL;
@@ -2606,66 +2715,8 @@ static BOOL generate_associations(const char *xdg_data_home, const char *package
                 goto end;
             }
 
-            friendlyDocNameW = assoc_query(ASSOCSTR_FRIENDLYDOCNAME, extensionW, NULL);
-            if (friendlyDocNameW)
-            {
-                friendlyDocNameA = wchars_to_utf8_chars(friendlyDocNameW);
-                if (friendlyDocNameA == NULL)
-                {
-                    WINE_ERR("out of memory\n");
-                    goto end;
-                }
-            }
-
-            iconW = assoc_query(ASSOCSTR_DEFAULTICON, extensionW, NULL);
-
-            contentTypeW = assoc_query(ASSOCSTR_CONTENTTYPE, extensionW, NULL);
-            if (contentTypeW)
-                strlwrW(contentTypeW);
-
-            if (!freedesktop_mime_type_for_extension(&nativeMimeTypes, extensionA, extensionW, &mimeTypeA))
+            if(!mime_type_for_extension(&nativeMimeTypes, extensionW, packages_dir, &mimeTypeA, &hasChanged))
                 goto end;
-
-            if (mimeTypeA == NULL)
-            {
-                if (contentTypeW != NULL && strchrW(contentTypeW, '/'))
-                    mimeTypeA = wchars_to_utf8_chars(contentTypeW);
-                else if ((get_special_mime_type(extensionW)))
-                    mimeTypeA = strdupA(get_special_mime_type(extensionW));
-                else
-                    mimeTypeA = heap_printf("application/x-wine-extension-%s", &extensionA[1]);
-
-                if (mimeTypeA != NULL)
-                {
-                    /* GNOME seems to ignore the <icon> tag in MIME packages,
-                     * and the default name is more intuitive anyway.
-                     */
-                    if (iconW)
-                    {
-                        char *flattened_mime = slashes_to_minuses(mimeTypeA);
-                        if (flattened_mime)
-                        {
-                            int index = 0;
-                            WCHAR *comma = strrchrW(iconW, ',');
-                            if (comma)
-                            {
-                                *comma = 0;
-                                index = atoiW(comma + 1);
-                            }
-                            iconA = extract_icon(iconW, index, flattened_mime, FALSE);
-                            HeapFree(GetProcessHeap(), 0, flattened_mime);
-                        }
-                    }
-
-                    write_freedesktop_mime_type_entry(packages_dir, extensionA, mimeTypeA, friendlyDocNameA);
-                    hasChanged = TRUE;
-                }
-                else
-                {
-                    WINE_FIXME("out of memory\n");
-                    goto end;
-                }
-            }
 
             commandW = assoc_query(ASSOCSTR_COMMAND, extensionW, openW);
             if (commandW == NULL)
@@ -2752,11 +2803,6 @@ static BOOL generate_associations(const char *xdg_data_home, const char *package
             HeapFree(GetProcessHeap(), 0, commandW);
             HeapFree(GetProcessHeap(), 0, executableW);
             HeapFree(GetProcessHeap(), 0, openWithIconA);
-            HeapFree(GetProcessHeap(), 0, friendlyDocNameW);
-            HeapFree(GetProcessHeap(), 0, friendlyDocNameA);
-            HeapFree(GetProcessHeap(), 0, iconW);
-            HeapFree(GetProcessHeap(), 0, iconA);
-            HeapFree(GetProcessHeap(), 0, contentTypeW);
             HeapFree(GetProcessHeap(), 0, mimeTypeA);
             HeapFree(GetProcessHeap(), 0, friendlyAppNameW);
             HeapFree(GetProcessHeap(), 0, friendlyAppNameA);
