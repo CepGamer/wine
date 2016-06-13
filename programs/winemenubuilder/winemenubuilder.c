@@ -189,6 +189,12 @@ struct rb_string_entry
     struct wine_rb_entry entry;
 };
 
+struct extension_list_entry
+{
+    WCHAR *extension;
+    struct list entry;
+};
+
 DEFINE_GUID(CLSID_WICIcnsEncoder, 0x312fb6f1,0xb767,0x409d,0x8a,0x6d,0x0f,0xc1,0x54,0xd4,0xf0,0x5c);
 
 static char *xdg_config_dir;
@@ -2493,68 +2499,151 @@ done:
     HeapFree(GetProcessHeap(), 0, openWithIconW);
 }
 
-static BOOL cleanup_associations(void)
+static BOOL is_extension_blacklisted(LPCWSTR extension);
+typedef HRESULT(*EXTENSION_KEY_HANDLER)(const WCHAR *extensionW, void *user_data);
+
+static HRESULT enumerate_registry_extensions(HKEY ext_key, EXTENSION_KEY_HANDLER ext_handler, void *user_data)
 {
-    static const WCHAR openW[] = {'o','p','e','n',0};
+    int i;
+    HRESULT ret = S_OK;
+    WCHAR *extensionW = NULL;
+
+    for (i = 0; ; ++i)
+    {
+        DWORD size = 1024;
+        LSTATUS ret_status;
+
+        do
+        {
+            HeapFree(GetProcessHeap(), 0, extensionW);
+            extensionW = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
+            if (extensionW == NULL)
+            {
+                WINE_ERR("out of memory\n");
+                ret_status = ERROR_OUTOFMEMORY;
+                break;
+            }
+            ret_status = RegEnumKeyExW(ext_key, i, extensionW, &size, NULL, NULL, NULL, NULL);
+            size *= 2;
+        } while (ret_status == ERROR_MORE_DATA);
+
+
+        if(ret_status != ERROR_SUCCESS)
+        {
+            if(ret_status != ERROR_NO_MORE_ITEMS)
+                ret = E_FAIL;
+            break;
+        }
+
+        if (extensionW[0] == '.' && !is_extension_blacklisted(extensionW))
+        {
+            ret = ext_handler(extensionW, user_data);
+            if(ret != S_OK)
+                break;
+        }
+    }
+
+    HeapFree(GetProcessHeap(), 0, extensionW);
+
+    return ret;
+}
+
+static BOOL remove_mime_association(const WCHAR *extensionW)
+{
     static const WCHAR DesktopFileW[] = {'D','e','s','k','t','o','p','F','i','l','e',0};
     HKEY assocKey;
+    HKEY extKey;
     BOOL hasChanged = FALSE;
+
     if ((assocKey = open_associations_reg_key()))
     {
-        int i;
-        BOOL done = FALSE;
-        for (i = 0; !done;)
+        if (RegOpenKeyW(assocKey, extensionW, &extKey) == ERROR_SUCCESS)
         {
-            WCHAR *extensionW = NULL;
-            DWORD size = 1024;
-            LSTATUS ret;
-
-            do
+            char *desktopFile = reg_get_val_utf8(assocKey, extensionW, DesktopFileW);
+            if (desktopFile)
             {
-                HeapFree(GetProcessHeap(), 0, extensionW);
-                extensionW = HeapAlloc(GetProcessHeap(), 0, size * sizeof(WCHAR));
-                if (extensionW == NULL)
-                {
-                    WINE_ERR("out of memory\n");
-                    ret = ERROR_OUTOFMEMORY;
-                    break;
-                }
-                ret = RegEnumKeyExW(assocKey, i, extensionW, &size, NULL, NULL, NULL, NULL);
-                size *= 2;
-            } while (ret == ERROR_MORE_DATA);
-
-            if (ret == ERROR_SUCCESS)
-            {
-                WCHAR *command;
-                command = assoc_query(ASSOCSTR_COMMAND, extensionW, openW);
-                if (command == NULL)
-                {
-                    char *desktopFile = reg_get_val_utf8(assocKey, extensionW, DesktopFileW);
-                    if (desktopFile)
-                    {
-                        WINE_TRACE("removing file type association for %s\n", wine_dbgstr_w(extensionW));
-                        remove(desktopFile);
-                    }
-                    RegDeleteKeyW(assocKey, extensionW);
-                    hasChanged = TRUE;
-                    HeapFree(GetProcessHeap(), 0, desktopFile);
-                }
-                else
-                    i++;
-                HeapFree(GetProcessHeap(), 0, command);
+                WINE_TRACE("removing file type association for %s\n", wine_dbgstr_w(extensionW));
+                remove(desktopFile);
             }
-            else
-            {
-                if (ret != ERROR_NO_MORE_ITEMS)
-                    WINE_ERR("error %d while reading registry\n", ret);
-                done = TRUE;
-            }
-            HeapFree(GetProcessHeap(), 0, extensionW);
+            RegDeleteKeyW(assocKey, extensionW);
+            hasChanged = TRUE;
+            RegCloseKey(extKey);
+            HeapFree(GetProcessHeap(), 0, desktopFile);
         }
+        else
+            WINE_ERR("could not open extension subkey\n");
         RegCloseKey(assocKey);
     }
     else
         WINE_ERR("could not open file associations key\n");
+
+    return hasChanged;
+}
+
+static HRESULT cleanup_associations_handler(const WCHAR *extensionW, void *user_data)
+{
+    static const WCHAR openW[] = {'o','p','e','n',0};
+    static const WCHAR DesktopFileW[] = {'D','e','s','k','t','o','p','F','i','l','e',0};
+    HRESULT ret = S_OK;
+    HKEY assocKey = open_associations_reg_key();
+    char *desktopFile = NULL;
+    struct list *ext_list = user_data;
+
+    if(assocKey)
+        desktopFile = reg_get_val_utf8(assocKey, extensionW, DesktopFileW);
+    else
+    {
+        WINE_ERR("could not open file associations key\n");
+        ret = E_FAIL;
+    }
+
+    if (desktopFile)
+    {
+        WCHAR *commandW;
+        commandW = assoc_query(ASSOCSTR_COMMAND, extensionW, openW);
+        if (commandW == NULL)
+        {
+            struct extension_list_entry *ext = HeapAlloc(GetProcessHeap(), 0, sizeof(struct extension_list_entry));
+            int len = strlenW(extensionW);
+
+            ext->extension = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
+            if(ext->extension)
+                memcpy(ext->extension, extensionW, (len + 1) * sizeof(WCHAR));
+            else
+                WINE_ERR("out of memory\n");
+            list_add_head(ext_list, &ext->entry);
+        }
+        HeapFree(GetProcessHeap(), 0, commandW);
+    }
+    return ret;
+}
+
+static BOOL cleanup_associations(void)
+{
+    HKEY assocKey;
+    BOOL hasChanged = FALSE;
+    struct list ext_list;
+    struct extension_list_entry *ext, *next_ext;
+
+    list_init(&ext_list);
+    if ((assocKey = open_associations_reg_key()))
+    {
+        if(FAILED(enumerate_registry_extensions(assocKey, &cleanup_associations_handler, &ext_list)))
+            WINE_ERR("error enumerating registry extensions\n");
+        RegCloseKey(assocKey);
+    }
+    else
+        WINE_ERR("could not open file associations key\n");
+
+    LIST_FOR_EACH_ENTRY_SAFE(ext, next_ext, &ext_list, struct extension_list_entry, entry)
+    {
+        list_remove(&ext->entry);
+        if(ext->extension)
+            hasChanged |= remove_mime_association(ext->extension);
+        HeapFree(GetProcessHeap(), 0, ext->extension);
+        HeapFree(GetProcessHeap(), 0, ext);
+    }
+
     return hasChanged;
 }
 
