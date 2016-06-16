@@ -1,0 +1,4 @@
+MODULE	= winemime.dll
+
+C_SRCS = \
+	winemime.c
