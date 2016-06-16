@@ -1,4 +1,6 @@
 MODULE	= winemime.dll
+IMPORTS = uuid windowscodecs shell32 shlwapi ole32 user32 advapi32
+IMPORTLIB = winemime
 
 C_SRCS = \
 	winemime.c

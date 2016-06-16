@@ -1,0 +1,5 @@
+@ stdcall winemime_build_native_mime_types(str ptr)
+@ stdcall winemime_mime_type_for_extension(ptr wstr str ptr ptr)
+@ stdcall winemime_enumerate_registry_extensions(long ptr ptr)
+@ stdcall winemime_add_mime_association(wstr str wstr str ptr)
+@ stdcall winemime_remove_mime_association(wstr)
