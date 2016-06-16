@@ -637,6 +637,7 @@ HEADER_SRCS = \
 	wine/exception.h \
 	wine/library.h \
 	wine/unicode.h \
+	wine/winemime.h \
 	winerror.h \
 	winevt.h \
 	wingdi.h \
