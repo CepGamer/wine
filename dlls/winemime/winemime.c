@@ -260,6 +260,15 @@ static WCHAR* utf8_chars_to_wchars(LPCSTR string)
     return ret;
 }
 
+static void strlwrA(char *string)
+{
+    while(*string)
+    {
+        *string = tolower(*string);
+        ++string;
+    }
+}
+
 /* Icon extraction routines
  *
  * FIXME: should use PrivateExtractIcons and friends
@@ -1552,39 +1561,31 @@ static BOOL match_glob(struct list *native_mime_types, const char *extension,
 
 static BOOL freedesktop_mime_type_for_extension(struct list *native_mime_types,
                                                 const char *extensionA,
-                                                LPCWSTR extensionW,
                                                 char **mime_type)
 {
-    WCHAR *lower_extensionW;
+    char *lower_extension;
     INT len;
     BOOL ret = match_glob(native_mime_types, extensionA, 0, mime_type);
+
     if (ret == FALSE || *mime_type != NULL)
         return ret;
-    len = strlenW(extensionW);
-    lower_extensionW = HeapAlloc(GetProcessHeap(), 0, (len + 1)*sizeof(WCHAR));
-    if (lower_extensionW)
+
+    len = strlen(extensionA);
+    lower_extension = HeapAlloc(GetProcessHeap(), 0, (len + 1)*sizeof(char));
+    if (lower_extension)
     {
-        char *lower_extensionA;
-        memcpy(lower_extensionW, extensionW, (len + 1)*sizeof(WCHAR));
-        strlwrW(lower_extensionW);
-        lower_extensionA = wchars_to_utf8_chars(lower_extensionW);
-        if (lower_extensionA)
-        {
-            ret = match_glob(native_mime_types, lower_extensionA, 1, mime_type);
-            HeapFree(GetProcessHeap(), 0, lower_extensionA);
-        }
-        else
-        {
-            ret = FALSE;
-            WINE_FIXME("out of memory\n");
-        }
-        HeapFree(GetProcessHeap(), 0, lower_extensionW);
+        memcpy(lower_extension, extensionA, (len + 1)*sizeof(char));
+        strlwrA(lower_extension);
+        ret = match_glob(native_mime_types, lower_extension, 1, mime_type);
     }
     else
     {
         ret = FALSE;
         WINE_FIXME("out of memory\n");
     }
+
+    HeapFree(GetProcessHeap(), 0, lower_extension);
+
     return ret;
 }
 
@@ -1600,7 +1601,6 @@ BOOL WINAPI winemime_mime_type_for_extension(struct list *native_mime_types,
 {
     BOOL ret = FALSE;
     char *extensionA = NULL;
-    WCHAR *lower_extensionW = NULL;
     WCHAR *friendlyDocNameW = NULL;
     char *friendlyDocNameA = NULL;
     WCHAR *iconW = NULL;
@@ -1609,17 +1609,11 @@ BOOL WINAPI winemime_mime_type_for_extension(struct list *native_mime_types,
     int len;
 
     len = strlenW(extensionW);
-    lower_extensionW = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
-    if(lower_extensionW)
+    extensionA = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(char));
+    if(extensionA)
     {
-        memcpy(lower_extensionW, extensionW, (len + 1) * sizeof(WCHAR));
-        strlwrW(lower_extensionW);
-        extensionA = wchars_to_utf8_chars(lower_extensionW);
-        if (extensionA == NULL)
-        {
-            WINE_ERR("out of memory\n");
-            goto end;
-        }
+        extensionA = wchars_to_utf8_chars(extensionW);
+        strlwrA(extensionA);
     }
     else
     {
@@ -1644,7 +1638,7 @@ BOOL WINAPI winemime_mime_type_for_extension(struct list *native_mime_types,
     if (contentTypeW)
         strlwrW(contentTypeW);
 
-    if (!freedesktop_mime_type_for_extension(native_mime_types, extensionA, extensionW, mime_type))
+    if (!freedesktop_mime_type_for_extension(native_mime_types, extensionA, mime_type))
         goto end;
 
     if (*mime_type == NULL)
@@ -2041,6 +2035,7 @@ static BOOL write_freedesktop_association_entry(const char *desktopPath, const c
     }
     else
         WINE_ERR("error writing association file %s\n", wine_dbgstr_a(desktopPath));
+
     return ret;
 }
 
@@ -2050,7 +2045,6 @@ BOOL WINAPI winemime_add_mime_association(const WCHAR *extensionW, const char *m
     static const WCHAR openW[] = {'o','p','e','n',0};
     BOOL ret = FALSE;
     char *extensionA = NULL;
-    WCHAR *lower_extensionW = NULL;
     WCHAR *executableW = NULL;
     char *openWithIconA = NULL;
     WCHAR *friendlyAppNameW = NULL;
@@ -2059,17 +2053,11 @@ BOOL WINAPI winemime_add_mime_association(const WCHAR *extensionW, const char *m
     int len;
 
     len = strlenW(extensionW);
-    lower_extensionW = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
-    if(lower_extensionW)
+    extensionA = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(char));
+    if(extensionA)
     {
-        memcpy(lower_extensionW, extensionW, (len + 1) * sizeof(WCHAR));
-        strlwrW(lower_extensionW);
-        extensionA = wchars_to_utf8_chars(lower_extensionW);
-        if (extensionA == NULL)
-        {
-            WINE_ERR("out of memory\n");
-            goto end;
-        }
+        extensionA = wchars_to_utf8_chars(extensionW);
+        strlwrA(extensionA);
     }
     else
     {
