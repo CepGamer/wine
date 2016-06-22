@@ -378,6 +378,36 @@ static WCHAR* utf8_chars_to_wchars(LPCSTR string)
     return ret;
 }
 
+static char* get_mime_dir(void )
+{
+    char *mime_dir = heap_printf("%s/mime", xdg_data_dir);
+    if (mime_dir == NULL)
+        WINE_ERR("out of memory\n");
+
+    return mime_dir;
+}
+
+static char* get_packages_dir(void )
+{
+    char *mime_dir = get_mime_dir();
+    char *packages_dir = heap_printf("%s/packages", mime_dir);
+    if (packages_dir == NULL)
+        WINE_ERR("out of memory\n");
+
+    HeapFree(GetProcessHeap(), 0, mime_dir);
+
+    return packages_dir;
+}
+
+static char* get_applications_dir(void )
+{
+    char *applications_dir = heap_printf("%s/applications", xdg_data_dir);
+    if (applications_dir == NULL)
+        WINE_ERR("out of memory\n");
+
+    return applications_dir;
+}
+
 /* Icon extraction routines
  *
  * FIXME: should use PrivateExtractIcons and friends
@@ -2780,7 +2810,7 @@ static void RefreshFileTypeAssociations(void)
         goto end;
     }
 
-    mime_dir = heap_printf("%s/mime", xdg_data_dir);
+    mime_dir = get_mime_dir();
     if (mime_dir == NULL)
     {
         WINE_ERR("out of memory\n");
@@ -2788,7 +2818,7 @@ static void RefreshFileTypeAssociations(void)
     }
     create_directories(mime_dir);
 
-    packages_dir = heap_printf("%s/packages", mime_dir);
+    packages_dir = get_packages_dir();
     if (packages_dir == NULL)
     {
         WINE_ERR("out of memory\n");
@@ -2796,7 +2826,7 @@ static void RefreshFileTypeAssociations(void)
     }
     create_directories(packages_dir);
 
-    applications_dir = heap_printf("%s/applications", xdg_data_dir);
+    applications_dir = get_applications_dir();
     if (applications_dir == NULL)
     {
         WINE_ERR("out of memory\n");
