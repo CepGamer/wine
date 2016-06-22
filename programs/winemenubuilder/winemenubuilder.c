@@ -408,6 +408,32 @@ static char* get_applications_dir(void )
     return applications_dir;
 }
 
+static void update_mime_database(void )
+{
+    const char *argv[3];
+    char *applications_dir = get_applications_dir();
+    char *mime_dir = get_mime_dir();
+
+    if (mime_dir == NULL || applications_dir == NULL)
+    {
+        WINE_ERR("out of memory\n");
+        goto end;
+    }
+
+    argv[0] = "update-mime-database";
+    argv[1] = mime_dir;
+    argv[2] = NULL;
+    _spawnvp( _P_DETACH, argv[0], argv );
+
+    argv[0] = "update-desktop-database";
+    argv[1] = applications_dir;
+    _spawnvp( _P_DETACH, argv[0], argv );
+
+end:
+    HeapFree(GetProcessHeap(), 0, applications_dir);
+    HeapFree(GetProcessHeap(), 0, mime_dir);
+}
+
 /* Icon extraction routines
  *
  * FIXME: should use PrivateExtractIcons and friends
@@ -2837,18 +2863,7 @@ static void RefreshFileTypeAssociations(void)
     hasChanged = generate_associations(xdg_data_dir, packages_dir, applications_dir);
     hasChanged |= cleanup_associations();
     if (hasChanged)
-    {
-        const char *argv[3];
-
-        argv[0] = "update-mime-database";
-        argv[1] = mime_dir;
-        argv[2] = NULL;
-        _spawnvp( _P_DETACH, argv[0], argv );
-
-        argv[0] = "update-desktop-database";
-        argv[1] = applications_dir;
-        _spawnvp( _P_DETACH, argv[0], argv );
-    }
+        update_mime_database();
 
 end:
     if (hSem)
