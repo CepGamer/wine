@@ -2269,6 +2269,38 @@ static BOOL generate_associations(const char *xdg_data_home, const char *package
     return user_data.has_changed;
 }
 
+static BOOL add_mime_to_native_system(const WCHAR *extension, const WCHAR *progID)
+{
+    char *applications_dir = get_applications_dir();
+    char *packages_dir = get_packages_dir();
+    char *mimeTypeA = NULL;
+    BOOL hasChanged = FALSE;
+    BOOL ret = FALSE;
+    struct list nativeMimeTypes;
+
+    list_init(&nativeMimeTypes);
+    if (!winemime_build_native_mime_types(xdg_data_dir, &nativeMimeTypes))
+    {
+        WINE_ERR("could not build native MIME types\n");
+        goto end;
+    }
+
+    if(!winemime_mime_type_for_extension(&nativeMimeTypes, extension, packages_dir, &mimeTypeA, &hasChanged))
+        goto end;
+
+    ret = winemime_add_mime_association(extension, mimeTypeA, progID, applications_dir, &hasChanged);
+
+    if(hasChanged)
+        update_mime_database();
+
+end:
+    free_native_mime_types(&nativeMimeTypes);
+    HeapFree(GetProcessHeap(), 0, applications_dir);
+    HeapFree(GetProcessHeap(), 0, packages_dir);
+
+    return ret;
+}
+
 static char *get_start_exe_path(void)
  {
     static const WCHAR startW[] = {'\\','c','o','m','m','a','n','d',
@@ -3134,10 +3166,14 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
     static const WCHAR dash_tW[] = {'-','t',0};
     static const WCHAR dash_uW[] = {'-','u',0};
     static const WCHAR dash_wW[] = {'-','w',0};
+    static const WCHAR dash_addW[] = {'-','-', 'm', 'i', 'm', 'e', 'a', 'd', 'd',0};
 
     LPWSTR token = NULL, p;
+    LPWSTR extension = NULL;
     BOOL bWait = FALSE;
     BOOL bURL = FALSE;
+    BOOL bLink = FALSE;
+    BOOL bAdd = FALSE;
     HRESULT hr;
     int ret = 0;
 
@@ -3179,7 +3215,11 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
                  if (outputFile)
                      thumbnail_lnk(lnkFile, outputFile);
             }
+            bLink = TRUE;
         }
+        else if ( !strcmpW( token, dash_addW ) )
+            bAdd = TRUE;
+
 	else if( token[0] == '-' )
 	{
 	    WINE_ERR( "unknown option %s\n", wine_dbgstr_w(token) );
@@ -3188,18 +3228,40 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
         {
             BOOL bRet;
 
-            if (bURL)
-                bRet = Process_URL( token, bWait );
-            else
-                bRet = Process_Link( token, bWait );
-            if (!bRet)
+            if (bURL || bLink)
             {
-                WINE_ERR( "failed to build menu item for %s\n", wine_dbgstr_w(token) );
-                ret = 1;
+                if(bURL)
+                    bRet = Process_URL( token, bWait );
+                else
+                    bRet = Process_Link( token, bWait );
+                if (!bRet)
+                {
+                    WINE_ERR( "failed to build menu item for %s\n", wine_dbgstr_w(token) );
+                    ret = 1;
+                }
+            }
+            else if(bAdd)
+            {
+                if(!extension)
+                {
+                    int len = strlenW(token);
+                    extension = HeapAlloc(GetProcessHeap(), 0, (len + 1) * sizeof(WCHAR));
+                    if(extension)
+                        memcpy(extension, token, (len + 1) * sizeof(WCHAR));
+                    else
+                    {
+                        WINE_ERR("out of memory\n");
+                        ret = 1;
+                    }
+                }
+                else
+                    add_mime_to_native_system(extension, token);
             }
         }
     }
 
     CoUninitialize();
+
+    HeapFree(GetProcessHeap(), 0, extension);
     return ret;
 }
