@@ -3166,7 +3166,8 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
     static const WCHAR dash_tW[] = {'-','t',0};
     static const WCHAR dash_uW[] = {'-','u',0};
     static const WCHAR dash_wW[] = {'-','w',0};
-    static const WCHAR dash_addW[] = {'-','-', 'm', 'i', 'm', 'e', 'a', 'd', 'd',0};
+    static const WCHAR dash_mimeaddW[] = {'-','-', 'm', 'i', 'm', 'e', 'a', 'd', 'd',0};
+    static const WCHAR dash_mimeremoveW[] = {'-','-', 'm', 'i', 'm', 'e', 'r', 'e', 'm','o','v','e',0};
 
     LPWSTR token = NULL, p;
     LPWSTR extension = NULL;
@@ -3174,6 +3175,7 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
     BOOL bURL = FALSE;
     BOOL bLink = FALSE;
     BOOL bAdd = FALSE;
+    BOOL bRemove = FALSE;
     HRESULT hr;
     int ret = 0;
 
@@ -3217,8 +3219,10 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
             }
             bLink = TRUE;
         }
-        else if ( !strcmpW( token, dash_addW ) )
+        else if ( !strcmpW( token, dash_mimeaddW ) )
             bAdd = TRUE;
+        else if ( !strcmpW( token, dash_mimeremoveW ) )
+            bRemove = TRUE;
 
 	else if( token[0] == '-' )
 	{
@@ -3257,6 +3261,8 @@ int PASCAL wWinMain (HINSTANCE hInstance, HINSTANCE prev, LPWSTR cmdline, int sh
                 else
                     add_mime_to_native_system(extension, token);
             }
+            else if(bRemove)
+                winemime_remove_mime_association(token);
         }
     }
 
